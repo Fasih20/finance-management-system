@@ -1,0 +1,20 @@
+{
+  "version": "5",
+  "dialect": "pg",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1715003800603,
+      "tag": "0000_outgoing_bloodscream",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1715004210480,
+      "tag": "0001_superb_corsair",
+      "breakpoints": true
+    }
+  ]
+}
