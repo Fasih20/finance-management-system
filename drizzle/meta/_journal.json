@@ -15,6 +15,13 @@
       "when": 1715004210480,
       "tag": "0001_superb_corsair",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1715171909434,
+      "tag": "0002_tranquil_metal_master",
+      "breakpoints": true
     }
   ]
 }
