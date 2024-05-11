@@ -1,4 +1,7 @@
+import { z } from "zod";
 import { Hono } from "hono";
+import { createId } from "@paralleldrive/cuid2";
+import { zValidator } from "@hono/zod-validator";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { 
   Configuration, 
@@ -7,6 +10,9 @@ import {
   PlaidEnvironments, 
   Products
 } from "plaid";
+
+import { db } from "@/db/drizzle";
+import { connectedBanks } from "@/db/schema";
 
 const configuration = new Configuration({
   basePath: PlaidEnvironments.sandbox,
@@ -42,6 +48,39 @@ const app = new Hono()
       });
 
       return c.json({ data: token.data.link_token }, 200);
+    },
+  )
+  .post(
+    "/exchange-public-token",
+    clerkMiddleware(),
+    zValidator(
+      "json",
+      z.object({
+        publicToken: z.string(),
+      }),
+    ),
+    async (c) => {
+      const auth = getAuth(c);
+      const { publicToken } = c.req.valid("json");
+
+      if (!auth?.userId) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+
+     const exchange = await client.itemPublicTokenExchange({
+      public_token: publicToken,
+     });
+
+     const [connectedBank] = await db
+      .insert(connectedBanks)
+      .values({
+        id: createId(),
+        userId: auth.userId,
+        accessToken: exchange.data.access_token,
+      })
+      .returning();
+
+      return c.json({ data: exchange.data.access_token }, 200);
     },
   );
 
