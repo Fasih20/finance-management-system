@@ -7,6 +7,8 @@ import { usePlaidLink } from "react-plaid-link";
 import { useCreateLinkToken } from "@/features/plaid/api/use-create-link-token";
 import { useExchangePublicToken } from "@/features/plaid/api/use-exchange-public-token";
 
+import { usePaywall } from "@/features/subscriptions/hooks/use-paywall";
+
 import { Button } from "@/components/ui/button";
 
 export const PlaidConnect = () => {
@@ -14,6 +16,7 @@ export const PlaidConnect = () => {
 
   const createLinkToken = useCreateLinkToken();
   const exchangePublicToken = useExchangePublicToken();
+  const { shouldBlock, triggerPaywall, isLoading } = usePaywall();
 
   useMount(() => {
     createLinkToken.mutate(undefined, {
@@ -34,12 +37,18 @@ export const PlaidConnect = () => {
   });
 
   const onClick = () => {
+    if (shouldBlock) {
+      triggerPaywall();
+      return;
+    }
+
     plaid.open();
   };
 
   const isDisabled =
     !plaid.ready ||
-    exchangePublicToken.isPending
+    exchangePublicToken.isPending ||
+    isLoading
 
   return (
     <Button
