@@ -1,0 +1,268 @@
+============================================================
+  FINANCE APP — AWS DEPLOYMENT GUIDE
+  Stack: ECS Fargate + ECR + SSM Parameter Store + Neon DB
+  CI/CD: GitHub Actions (auto-deploys on push to main)
+============================================================
+
+
+────────────────────────────────────────────────────────────
+OVERVIEW
+────────────────────────────────────────────────────────────
+
+What Terraform creates:
+  • ECR repository      — stores your Docker images
+  • ECS Fargate cluster — runs the container (serverless, no EC2 to manage)
+  • ECS Task Definition — specifies CPU/memory/env vars/secrets
+  • ECS Service         — keeps 1 container running at all times
+  • SSM Parameter Store — stores all secrets (encrypted at rest)
+  • IAM roles           — lets ECS read SSM secrets
+  • CloudWatch Logs     — container log streaming (/ecs/finance-app)
+  • Security Group      — opens port 3000 to the internet
+
+What GitHub Actions does on every push to main:
+  1. Builds Docker image (with NEXT_PUBLIC_* baked in)
+  2. Pushes image to ECR
+  3. Forces ECS to redeploy with the new image
+  4. Waits for the service to stabilize
+
+
+────────────────────────────────────────────────────────────
+STEP 1 — PREREQUISITES
+────────────────────────────────────────────────────────────
+
+Install on your local machine:
+
+  AWS CLI v2:
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/aws.zip
+    unzip /tmp/aws.zip -d /tmp
+    sudo /tmp/aws/install
+
+  Terraform:
+    # Fedora/RHEL
+    sudo dnf install -y dnf-plugins-core
+    sudo dnf config-manager --add-repo https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
+    sudo dnf install -y terraform
+
+    # Ubuntu/Debian
+    wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+    sudo apt-get update && sudo apt-get install terraform
+
+  Docker: https://docs.docker.com/engine/install/
+
+
+────────────────────────────────────────────────────────────
+STEP 2 — AWS CREDENTIALS
+────────────────────────────────────────────────────────────
+
+  1. Go to: AWS Console → IAM → Users → <your user> → Security credentials
+  2. Click "Create access key" → choose "CLI" → download the CSV
+
+  Required IAM permissions (attach these policies to your IAM user):
+    • AmazonECS_FullAccess
+    • AmazonEC2ContainerRegistryFullAccess
+    • IAMFullAccess
+    • AmazonSSMFullAccess
+    • CloudWatchLogsFullAccess
+
+  Configure the CLI:
+    aws configure
+    # Enter: Access Key ID, Secret Access Key, us-east-1, json
+
+
+────────────────────────────────────────────────────────────
+STEP 3 — TERRAFORM (one-time infra setup)
+────────────────────────────────────────────────────────────
+
+  cd terraform
+  terraform init
+  terraform apply
+
+  Type "yes" when prompted.
+
+  When done, note the outputs:
+    ecr_repository_url    → e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com/finance-app-repo
+    ecs_cluster_name      → finance-app-cluster
+    ecs_service_name      → finance-app-service
+    ssm_parameter_paths   → list of /finance-app/* paths to populate next
+
+
+────────────────────────────────────────────────────────────
+STEP 4 — POPULATE SSM SECRETS
+────────────────────────────────────────────────────────────
+
+  Edit scripts/setup-ssm.sh and replace every "CHANGEME" with real values.
+  The real values are in the .env file (NOT committed to git — ask Safwan).
+
+  Then run:
+    chmod +x scripts/setup-ssm.sh
+    ./scripts/setup-ssm.sh
+
+  This stores all secrets encrypted in SSM. ECS injects them as environment
+  variables when the container starts.
+
+  Secrets to fill in:
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY  → from Clerk dashboard (publishable key)
+    CLERK_PUBLISHABLE_KEY              → same as above
+    CLERK_SECRET_KEY                   → from Clerk dashboard (secret key)
+    DATABASE_URL                       → Neon PostgreSQL connection string
+    PLAID_CLIENT_TOKEN                 → from Plaid dashboard
+    PLAID_SECRET_TOKEN                 → from Plaid dashboard
+    LEMONSQUEEZY_STORE_ID              → from LemonSqueezy dashboard
+    LEMONSQUEEZY_PRODUCT_ID            → from LemonSqueezy dashboard
+    LEMONSQUEEZY_API_KEY               → from LemonSqueezy dashboard
+    LEMONSQUEEZY_WEBHOOK_SECRET        → from LemonSqueezy dashboard
+    AWS_ACCESS_KEY_ID                  → IAM key for Bedrock (AI Insights feature)
+    AWS_SECRET_ACCESS_KEY              → IAM secret for Bedrock
+    GEMINI_API_KEY                     → from Google AI Studio
+
+
+────────────────────────────────────────────────────────────
+STEP 5 — GITHUB SECRETS (for CI/CD auto-deploy)
+────────────────────────────────────────────────────────────
+
+  Go to: GitHub repo → Settings → Secrets and variables → Actions → New secret
+
+  Add these secrets:
+
+    Name                              Value
+    ────────────────────────────────  ──────────────────────────────────────
+    AWS_ACCESS_KEY_ID                 your IAM access key
+    AWS_SECRET_ACCESS_KEY             your IAM secret key
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY pk_test_... (from Clerk dashboard)
+    NEXT_PUBLIC_APP_URL               http://<ECS-task-public-IP>:3000
+                                      (or your custom domain once set up)
+
+  Note: NEXT_PUBLIC_APP_URL — after first deploy, find the ECS task public IP:
+    AWS Console → ECS → finance-app-cluster → Tasks → click running task → Public IP
+    Then update the GitHub secret and redeploy.
+
+
+────────────────────────────────────────────────────────────
+STEP 6 — FIRST MANUAL DEPLOY (bootstrap the image)
+────────────────────────────────────────────────────────────
+
+  Before GitHub Actions can deploy, ECR needs at least one image.
+  Run this once manually:
+
+  # Get your AWS account ID
+  AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+  ECR_URL="$AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/finance-app-repo"
+
+  # Authenticate Docker to ECR
+  aws ecr get-login-password --region us-east-1 | \
+    docker login --username AWS --password-stdin $ECR_URL
+
+  # Build with NEXT_PUBLIC vars baked in
+  docker build \
+    --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_test_YXJyaX..." \
+    --build-arg NEXT_PUBLIC_APP_URL="http://localhost:3000" \
+    -t $ECR_URL:latest \
+    .
+
+  # Push
+  docker push $ECR_URL:latest
+
+  # Force ECS to pick up the new image
+  aws ecs update-service \
+    --cluster finance-app-cluster \
+    --service finance-app-service \
+    --force-new-deployment \
+    --region us-east-1
+
+  # Watch it deploy (takes ~2-3 min)
+  aws ecs wait services-stable \
+    --cluster finance-app-cluster \
+    --services finance-app-service \
+    --region us-east-1
+
+
+────────────────────────────────────────────────────────────
+STEP 7 — AFTER FIRST DEPLOY: FIND YOUR APP URL
+────────────────────────────────────────────────────────────
+
+  ECS assigns a public IP to each running task. To find it:
+
+    # List running tasks
+    aws ecs list-tasks \
+      --cluster finance-app-cluster \
+      --service-name finance-app-service
+
+    # Get public IP from task details (replace TASK_ARN)
+    aws ecs describe-tasks \
+      --cluster finance-app-cluster \
+      --tasks TASK_ARN \
+      --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" \
+      --output text | xargs -I{} aws ec2 describe-network-interfaces \
+      --network-interface-ids {} \
+      --query "NetworkInterfaces[0].Association.PublicIp" \
+      --output text
+
+  Your app will be at: http://<public-ip>:3000
+
+  Update NEXT_PUBLIC_APP_URL in both:
+    • GitHub Secret (NEXT_PUBLIC_APP_URL)
+    • scripts/setup-ssm.sh → re-run to update SSM
+  Then redeploy.
+
+
+────────────────────────────────────────────────────────────
+STEP 8 — DATABASE MIGRATIONS
+────────────────────────────────────────────────────────────
+
+  Run migrations against Neon (the DB is remote, no migration container needed):
+
+    # Set DATABASE_URL in your local environment first
+    export DATABASE_URL="postgresql://..."
+    npm run db:migrate
+
+
+────────────────────────────────────────────────────────────
+ONGOING DEPLOYMENTS (after setup is complete)
+────────────────────────────────────────────────────────────
+
+  Just push to main:
+    git push origin main
+
+  GitHub Actions will automatically:
+    1. Build new Docker image with correct NEXT_PUBLIC vars
+    2. Push to ECR
+    3. Redeploy ECS with new image
+    4. Wait for stability
+
+  Monitor at: AWS Console → ECS → finance-app-cluster → finance-app-service
+
+
+────────────────────────────────────────────────────────────
+VIEWING LOGS
+────────────────────────────────────────────────────────────
+
+  AWS Console → CloudWatch → Log groups → /ecs/finance-app
+
+  Or via CLI:
+    aws logs tail /ecs/finance-app --follow --region us-east-1
+
+
+────────────────────────────────────────────────────────────
+TEARING DOWN (if needed)
+────────────────────────────────────────────────────────────
+
+  cd terraform
+  terraform destroy
+
+  Note: ECR images are NOT deleted by terraform destroy.
+  To delete them: AWS Console → ECR → finance-app-repo → Delete
+
+
+────────────────────────────────────────────────────────────
+FILE REFERENCE
+────────────────────────────────────────────────────────────
+
+  terraform/main.tf                  — all AWS infrastructure
+  Dockerfile                         — multi-stage production build
+  .github/workflows/deploy.yml       — CI/CD pipeline
+  scripts/setup-ssm.sh               — populate SSM secrets (run once)
+  .env                               — local dev only, NOT committed to git
+  .env.example                       — template, safe to commit
+
+============================================================
