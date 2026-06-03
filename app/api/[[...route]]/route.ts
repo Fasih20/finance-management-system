@@ -7,6 +7,7 @@ import accounts from "./accounts";
 import categories from "./categories";
 import transactions from "./transactions";
 import subscriptions from "./subscriptions";
+import aiInsights from "./ai-insights";
 
 export const runtime = "nodejs";
 
@@ -19,6 +20,7 @@ const routes = app
   .route("/categories", categories)
   .route("/transactions", transactions)
   .route("/subscriptions", subscriptions)
+  .route("/ai-insights", aiInsights)
 
 export const GET = handle(app);
 export const POST = handle(app);
