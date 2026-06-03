@@ -14,6 +14,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# --- ADD THIS LINE TO FIX THE BUILD CRASH ---
+ENV DATABASE_URL="postgresql://dummy:dummy@ep-dummy.us-east-1.aws.neon.tech/neondb?sslmode=require"
+# --------------------------------------------
+
 # Disable Next.js telemetry during build
 ENV NEXT_TELEMETRY_DISABLED 1
 
