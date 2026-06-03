@@ -39,14 +39,16 @@ const app = new Hono().get(
       });
     }
 
-    // 2. Format transactions into a readable text block
+    // 2. Format transactions into a readable text block.
+    // Sanitize user-controlled fields to prevent prompt injection.
+    const sanitize = (s: string) => s.replace(/[^\w\s\-.,&'()]/g, "").slice(0, 100);
     const transactionText = data
       .map((t) => {
         const dateStr = format(new Date(t.date), "yyyy-MM-dd");
         const amountDollars = convertAmountFromMiliunits(t.amount);
         const sign = amountDollars >= 0 ? "+" : "";
-        const categoryStr = t.category ? ` [${t.category}]` : "";
-        return `${dateStr} | ${t.payee}${categoryStr} | ${sign}$${Math.abs(amountDollars).toFixed(2)}`;
+        const categoryStr = t.category ? ` [${sanitize(t.category)}]` : "";
+        return `${dateStr} | ${sanitize(t.payee)}${categoryStr} | ${sign}$${Math.abs(amountDollars).toFixed(2)}`;
       })
       .join("\n");
 

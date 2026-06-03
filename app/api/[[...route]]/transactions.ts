@@ -126,6 +126,15 @@ const app = new Hono()
         return c.json({ error: "Unauthorized" }, 401);
       }
 
+      const [account] = await db
+        .select({ id: accounts.id })
+        .from(accounts)
+        .where(and(eq(accounts.id, values.accountId), eq(accounts.userId, auth.userId)));
+
+      if (!account) {
+        return c.json({ error: "Account not found" }, 404);
+      }
+
       const [data] = await db.insert(transactions).values({
         id: createId(),
         ...values,
@@ -152,6 +161,16 @@ const app = new Hono()
         return c.json({ error: "Unauthorized" }, 401);
       }
 
+      const accountIds = [...new Set(values.map((v) => v.accountId))];
+      const userAccounts = await db
+        .select({ id: accounts.id })
+        .from(accounts)
+        .where(and(inArray(accounts.id, accountIds), eq(accounts.userId, auth.userId)));
+
+      if (userAccounts.length !== accountIds.length) {
+        return c.json({ error: "One or more accounts not found" }, 404);
+      }
+
       const data = await db
         .insert(transactions)
         .values(
@@ -161,7 +180,7 @@ const app = new Hono()
           }))
         )
         .returning();
-        
+
       return c.json({ data });
     },
   )

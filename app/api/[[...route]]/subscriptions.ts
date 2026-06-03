@@ -89,25 +89,26 @@ const app = new Hono()
     "/webhook",
     async (c) => {
       const text = await c.req.text();
+      const signatureHeader = c.req.header("x-signature");
 
-      const hmac = crypto.createHmac(
-        "sha256",
-        process.env.LEMONSQUEEZY_WEBHOOK_SECRET!
-      );
-      const digest = Buffer.from(
-        hmac.update(text).digest("hex"),
-        "utf8",
-      );
-      const signature = Buffer.from(
-        c.req.header("x-signature") as string,
-        "utf8"
-      );
-
-      if (!crypto.timingSafeEqual(digest, signature)) {
+      if (!signatureHeader || !process.env.LEMONSQUEEZY_WEBHOOK_SECRET) {
         return c.json({ error: "Unauthorized" }, 401);
       }
 
-      const payload = JSON.parse(text);
+      const hmac = crypto.createHmac("sha256", process.env.LEMONSQUEEZY_WEBHOOK_SECRET);
+      const digest = Buffer.from(hmac.update(text).digest("hex"), "utf8");
+      const signature = Buffer.from(signatureHeader, "utf8");
+
+      if (digest.length !== signature.length || !crypto.timingSafeEqual(digest, signature)) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+
+      let payload: any;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        return c.json({ error: "Invalid payload" }, 400);
+      }
       const event = payload.meta.event_name;
 
       const subscriptionId = payload.data.id;
