@@ -1,268 +1,310 @@
 ============================================================
-  FINANCE APP — AWS DEPLOYMENT GUIDE
-  Stack: ECS Fargate + ECR + SSM Parameter Store + Neon DB
-  CI/CD: GitHub Actions (auto-deploys on push to main)
+  FINANCE APP — COMPLETE DEPLOYMENT GUIDE FOR FASIH
+  Written by: Safwan
+  Method: Vercel (hosting) + Neon (database, already live)
+  Time needed: ~20 minutes
 ============================================================
 
+Hi Fasih! Follow these steps in order. Each step tells you
+exactly what to click or type. Ask Safwan for the .env file
+which has all the real secret values you will need.
+
+
+════════════════════════════════════════════════════════════
+  PART 1 — ENVIRONMENT VALUES (ask Safwan for these)
+════════════════════════════════════════════════════════════
+
+You need these values from the .env file Safwan will send you.
+Keep this file safe — do NOT commit it to GitHub.
+
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = YOUR_CLERK_PUBLISHABLE_KEY
+  CLERK_PUBLISHABLE_KEY             = YOUR_CLERK_PUBLISHABLE_KEY
+  CLERK_SECRET_KEY                  = YOUR_CLERK_SECRET_KEY
+  DATABASE_URL                      = YOUR_DATABASE_URL
+  NEXT_PUBLIC_CLERK_SIGN_IN_URL     = /sign-in
+  NEXT_PUBLIC_CLERK_SIGN_UP_URL     = /sign-up
+  PLAID_CLIENT_TOKEN                = YOUR_PLAID_CLIENT_TOKEN
+  PLAID_SECRET_TOKEN                = YOUR_PLAID_SECRET_TOKEN
+  GEMINI_API_KEY                    = YOUR_GEMINI_API_KEY
+  NEXT_PUBLIC_APP_URL               = (you will fill this in after Vercel gives you a URL)
+
+  Leave these blank for now — app works without them:
+  LEMONSQUEEZY_STORE_ID             =
+  LEMONSQUEEZY_PRODUCT_ID           =
+  LEMONSQUEEZY_API_KEY              =
+  LEMONSQUEEZY_WEBHOOK_SECRET       =
+  AWS_ACCESS_KEY_ID                 =
+  AWS_SECRET_ACCESS_KEY             =
+
+
+════════════════════════════════════════════════════════════
+  PART 2 — DEPLOY ON VERCEL (10 minutes)
+════════════════════════════════════════════════════════════
+
+Vercel is a free hosting platform made specifically for
+Next.js apps. No Docker, no servers, no terminal needed.
 
 ────────────────────────────────────────────────────────────
-OVERVIEW
+STEP 1 — Create a Vercel account
 ────────────────────────────────────────────────────────────
 
-What Terraform creates:
-  • ECR repository      — stores your Docker images
-  • ECS Fargate cluster — runs the container (serverless, no EC2 to manage)
-  • ECS Task Definition — specifies CPU/memory/env vars/secrets
-  • ECS Service         — keeps 1 container running at all times
-  • SSM Parameter Store — stores all secrets (encrypted at rest)
-  • IAM roles           — lets ECS read SSM secrets
-  • CloudWatch Logs     — container log streaming (/ecs/finance-app)
-  • Security Group      — opens port 3000 to the internet
-
-What GitHub Actions does on every push to main:
-  1. Builds Docker image (with NEXT_PUBLIC_* baked in)
-  2. Pushes image to ECR
-  3. Forces ECS to redeploy with the new image
-  4. Waits for the service to stabilize
-
-
-────────────────────────────────────────────────────────────
-STEP 1 — PREREQUISITES
-────────────────────────────────────────────────────────────
-
-Install on your local machine:
-
-  AWS CLI v2:
-    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/aws.zip
-    unzip /tmp/aws.zip -d /tmp
-    sudo /tmp/aws/install
-
-  Terraform:
-    # Fedora/RHEL
-    sudo dnf install -y dnf-plugins-core
-    sudo dnf config-manager --add-repo https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
-    sudo dnf install -y terraform
-
-    # Ubuntu/Debian
-    wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-    sudo apt-get update && sudo apt-get install terraform
-
-  Docker: https://docs.docker.com/engine/install/
-
-
-────────────────────────────────────────────────────────────
-STEP 2 — AWS CREDENTIALS
-────────────────────────────────────────────────────────────
-
-  1. Go to: AWS Console → IAM → Users → <your user> → Security credentials
-  2. Click "Create access key" → choose "CLI" → download the CSV
-
-  Required IAM permissions (attach these policies to your IAM user):
-    • AmazonECS_FullAccess
-    • AmazonEC2ContainerRegistryFullAccess
-    • IAMFullAccess
-    • AmazonSSMFullAccess
-    • CloudWatchLogsFullAccess
-
-  Configure the CLI:
-    aws configure
-    # Enter: Access Key ID, Secret Access Key, us-east-1, json
+  1. Go to: https://vercel.com
+  2. Click "Sign Up"
+  3. Choose "Continue with GitHub"
+  4. Authorize Vercel to access your GitHub
 
 
 ────────────────────────────────────────────────────────────
-STEP 3 — TERRAFORM (one-time infra setup)
+STEP 2 — Import the project
 ────────────────────────────────────────────────────────────
 
-  cd terraform
-  terraform init
-  terraform apply
-
-  Type "yes" when prompted.
-
-  When done, note the outputs:
-    ecr_repository_url    → e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com/finance-app-repo
-    ecs_cluster_name      → finance-app-cluster
-    ecs_service_name      → finance-app-service
-    ssm_parameter_paths   → list of /finance-app/* paths to populate next
+  1. On the Vercel dashboard click "Add New..." → "Project"
+  2. You will see a list of GitHub repositories
+  3. Find "finance-management-system" and click "Import"
+  4. On the configuration page:
+       - Framework Preset: Next.js  (auto-detected, leave it)
+       - Root Directory: ./          (leave it)
+       - Build Command: npm run build (leave it)
+       - DO NOT click Deploy yet — add env vars first (Step 3)
 
 
 ────────────────────────────────────────────────────────────
-STEP 4 — POPULATE SSM SECRETS
+STEP 3 — Add environment variables
 ────────────────────────────────────────────────────────────
 
-  Edit scripts/setup-ssm.sh and replace every "CHANGEME" with real values.
-  The real values are in the .env file (NOT committed to git — ask Safwan).
+  Still on the same "Configure Project" page, scroll down to
+  "Environment Variables" and add each one below.
 
-  Then run:
-    chmod +x scripts/setup-ssm.sh
-    ./scripts/setup-ssm.sh
+  For each variable:
+    - Type the NAME in the left box
+    - Type the VALUE in the right box
+    - Click "Add"
 
-  This stores all secrets encrypted in SSM. ECS injects them as environment
-  variables when the container starts.
+  NAME                                VALUE
+  ──────────────────────────────────  ──────────────────────────────────────────
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY   YOUR_CLERK_PUBLISHABLE_KEY
+  CLERK_PUBLISHABLE_KEY               YOUR_CLERK_PUBLISHABLE_KEY
+  CLERK_SECRET_KEY                    YOUR_CLERK_SECRET_KEY
+  DATABASE_URL                        YOUR_DATABASE_URL
+  NEXT_PUBLIC_CLERK_SIGN_IN_URL       /sign-in
+  NEXT_PUBLIC_CLERK_SIGN_UP_URL       /sign-up
+  PLAID_CLIENT_TOKEN                  YOUR_PLAID_CLIENT_TOKEN
+  PLAID_SECRET_TOKEN                  YOUR_PLAID_SECRET_TOKEN
+  GEMINI_API_KEY                      YOUR_GEMINI_API_KEY
+  NEXT_PUBLIC_APP_URL                 https://finance-management-system.vercel.app
+                                      ^^^ use a guess for now, you will fix it in Step 6
 
-  Secrets to fill in:
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY  → from Clerk dashboard (publishable key)
-    CLERK_PUBLISHABLE_KEY              → same as above
-    CLERK_SECRET_KEY                   → from Clerk dashboard (secret key)
-    DATABASE_URL                       → Neon PostgreSQL connection string
-    PLAID_CLIENT_TOKEN                 → from Plaid dashboard
-    PLAID_SECRET_TOKEN                 → from Plaid dashboard
-    LEMONSQUEEZY_STORE_ID              → from LemonSqueezy dashboard
-    LEMONSQUEEZY_PRODUCT_ID            → from LemonSqueezy dashboard
-    LEMONSQUEEZY_API_KEY               → from LemonSqueezy dashboard
-    LEMONSQUEEZY_WEBHOOK_SECRET        → from LemonSqueezy dashboard
-    AWS_ACCESS_KEY_ID                  → IAM key for Bedrock (AI Insights feature)
-    AWS_SECRET_ACCESS_KEY              → IAM secret for Bedrock
-    GEMINI_API_KEY                     → from Google AI Studio
-
-
-────────────────────────────────────────────────────────────
-STEP 5 — GITHUB SECRETS (for CI/CD auto-deploy)
-────────────────────────────────────────────────────────────
-
-  Go to: GitHub repo → Settings → Secrets and variables → Actions → New secret
-
-  Add these secrets:
-
-    Name                              Value
-    ────────────────────────────────  ──────────────────────────────────────
-    AWS_ACCESS_KEY_ID                 your IAM access key
-    AWS_SECRET_ACCESS_KEY             your IAM secret key
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY pk_test_... (from Clerk dashboard)
-    NEXT_PUBLIC_APP_URL               http://<ECS-task-public-IP>:3000
-                                      (or your custom domain once set up)
-
-  Note: NEXT_PUBLIC_APP_URL — after first deploy, find the ECS task public IP:
-    AWS Console → ECS → finance-app-cluster → Tasks → click running task → Public IP
-    Then update the GitHub secret and redeploy.
+  NOTE: For NEXT_PUBLIC_APP_URL just type any placeholder like
+        https://finance-management-system.vercel.app for now.
+        You will update it to the real URL in Step 6.
 
 
 ────────────────────────────────────────────────────────────
-STEP 6 — FIRST MANUAL DEPLOY (bootstrap the image)
+STEP 4 — Deploy
 ────────────────────────────────────────────────────────────
 
-  Before GitHub Actions can deploy, ECR needs at least one image.
-  Run this once manually:
+  1. Click the "Deploy" button
+  2. Vercel will build and deploy the app (takes 2-3 minutes)
+  3. You will see a progress bar and build logs
+  4. When done it shows "Congratulations!" with a URL like:
+       https://finance-management-system-abc123.vercel.app
 
-  # Get your AWS account ID
-  AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-  ECR_URL="$AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/finance-app-repo"
-
-  # Authenticate Docker to ECR
-  aws ecr get-login-password --region us-east-1 | \
-    docker login --username AWS --password-stdin $ECR_URL
-
-  # Build with NEXT_PUBLIC vars baked in
-  docker build \
-    --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_test_YXJyaX..." \
-    --build-arg NEXT_PUBLIC_APP_URL="http://localhost:3000" \
-    -t $ECR_URL:latest \
-    .
-
-  # Push
-  docker push $ECR_URL:latest
-
-  # Force ECS to pick up the new image
-  aws ecs update-service \
-    --cluster finance-app-cluster \
-    --service finance-app-service \
-    --force-new-deployment \
-    --region us-east-1
-
-  # Watch it deploy (takes ~2-3 min)
-  aws ecs wait services-stable \
-    --cluster finance-app-cluster \
-    --services finance-app-service \
-    --region us-east-1
+  COPY THAT URL — you need it for the next steps.
 
 
 ────────────────────────────────────────────────────────────
-STEP 7 — AFTER FIRST DEPLOY: FIND YOUR APP URL
+STEP 5 — Fix the NEXT_PUBLIC_APP_URL with the real URL
 ────────────────────────────────────────────────────────────
 
-  ECS assigns a public IP to each running task. To find it:
+  Now that you have the real Vercel URL, update the env var:
 
-    # List running tasks
-    aws ecs list-tasks \
-      --cluster finance-app-cluster \
-      --service-name finance-app-service
+  1. Go to your project on Vercel dashboard
+  2. Click "Settings" tab (top menu)
+  3. Click "Environment Variables" in the left sidebar
+  4. Find NEXT_PUBLIC_APP_URL → click the three dots → Edit
+  5. Replace the placeholder with your actual URL, for example:
+       https://finance-management-system-abc123.vercel.app
+     (no trailing slash, no spaces)
+  6. Click Save
 
-    # Get public IP from task details (replace TASK_ARN)
-    aws ecs describe-tasks \
-      --cluster finance-app-cluster \
-      --tasks TASK_ARN \
-      --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" \
-      --output text | xargs -I{} aws ec2 describe-network-interfaces \
-      --network-interface-ids {} \
-      --query "NetworkInterfaces[0].Association.PublicIp" \
-      --output text
+  Then redeploy to apply:
+  1. Click "Deployments" tab
+  2. Click the three dots on the latest deployment → "Redeploy"
+  3. Click "Redeploy" to confirm
 
-  Your app will be at: http://<public-ip>:3000
 
-  Update NEXT_PUBLIC_APP_URL in both:
-    • GitHub Secret (NEXT_PUBLIC_APP_URL)
-    • scripts/setup-ssm.sh → re-run to update SSM
-  Then redeploy.
+════════════════════════════════════════════════════════════
+  PART 3 — FIX CLERK (5 minutes)
+════════════════════════════════════════════════════════════
 
+Clerk handles login/signup. You need to tell it that your
+Vercel URL is allowed to use it.
 
 ────────────────────────────────────────────────────────────
-STEP 8 — DATABASE MIGRATIONS
+STEP 6 — Add Vercel URL to Clerk dashboard
 ────────────────────────────────────────────────────────────
 
-  Run migrations against Neon (the DB is remote, no migration container needed):
+  1. Go to: https://dashboard.clerk.com
+  2. Log in (ask Safwan for the account if needed)
+  3. Select the app "arriving-elk-75" (or similar name)
+  4. In the left sidebar click "Configure" → "Paths"
+  5. Find "Allowed redirect URLs" section
+  6. Add your Vercel URL:
+       https://finance-management-system-abc123.vercel.app
+     and also add with wildcard:
+       https://finance-management-system-abc123.vercel.app/*
+  7. Click Save
 
-    # Set DATABASE_URL in your local environment first
-    export DATABASE_URL="postgresql://..."
+  If Clerk shows a message about production instances:
+  ┌─────────────────────────────────────────────────────┐
+  │  Go to the top of the Clerk dashboard where it says │
+  │  "Development" and click it → "Create Production    │
+  │  Instance" → follow the steps.                      │
+  │                                                     │
+  │  Vercel has a special Clerk integration. When Clerk │
+  │  asks for your domain, type your Vercel URL:        │
+  │    finance-management-system-abc123.vercel.app      │
+  │                                                     │
+  │  Clerk will give you new pk_live_ and sk_live_ keys.│
+  │  Update those in Vercel env vars (Step 5 process)   │
+  │  with the new values.                               │
+  └─────────────────────────────────────────────────────┘
+
+
+════════════════════════════════════════════════════════════
+  PART 4 — RUN DATABASE MIGRATIONS
+════════════════════════════════════════════════════════════
+
+The database lives on Neon (already set up by Safwan).
+You just need to run migrations to create the tables.
+
+────────────────────────────────────────────────────────────
+STEP 7 — Run migrations (one time only)
+────────────────────────────────────────────────────────────
+
+  You need Node.js installed. Download from: https://nodejs.org
+  (choose the LTS version)
+
+  Open PowerShell and run:
+
+    cd path\to\finance-management-system
+
+  Set the database URL temporarily:
+
+    $env:DATABASE_URL="postgresql://neondb_owner:YOUR_PASSWORD@YOUR_HOST/neondb?sslmode=require&channel_binding=require"
+
+  Install dependencies:
+
+    npm install
+
+  Run migrations:
+
     npm run db:migrate
 
+  You should see "migrations applied" or similar output.
+  This only needs to be done once.
+
+
+════════════════════════════════════════════════════════════
+  PART 5 — TEST THE APP
+════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────
-ONGOING DEPLOYMENTS (after setup is complete)
+STEP 8 — Open and test
 ────────────────────────────────────────────────────────────
 
-  Just push to main:
-    git push origin main
+  1. Go to your Vercel URL in the browser:
+       https://finance-management-system-abc123.vercel.app
 
-  GitHub Actions will automatically:
-    1. Build new Docker image with correct NEXT_PUBLIC vars
-    2. Push to ECR
-    3. Redeploy ECS with new image
-    4. Wait for stability
+  2. You should see the login page (Clerk sign-in)
 
-  Monitor at: AWS Console → ECS → finance-app-cluster → finance-app-service
+  3. Create an account and log in
+
+  4. Check that the dashboard loads with no errors
+
+  If you see errors:
+    → Go to Vercel dashboard → your project → "Functions" tab
+      (shows server-side errors)
+    → Or go to browser DevTools → Console tab
+      (shows client-side errors)
 
 
-────────────────────────────────────────────────────────────
-VIEWING LOGS
-────────────────────────────────────────────────────────────
-
-  AWS Console → CloudWatch → Log groups → /ecs/finance-app
-
-  Or via CLI:
-    aws logs tail /ecs/finance-app --follow --region us-east-1
-
+════════════════════════════════════════════════════════════
+  PART 6 — ONGOING UPDATES
+════════════════════════════════════════════════════════════
 
 ────────────────────────────────────────────────────────────
-TEARING DOWN (if needed)
+STEP 9 — How to deploy new code changes
 ────────────────────────────────────────────────────────────
 
-  cd terraform
-  terraform destroy
+  Every time Safwan (or you) pushes code to the main branch
+  on GitHub, Vercel AUTOMATICALLY rebuilds and redeploys.
 
-  Note: ECR images are NOT deleted by terraform destroy.
-  To delete them: AWS Console → ECR → finance-app-repo → Delete
+  Nothing extra needed — just push to GitHub.
+
+  To manually trigger a redeploy:
+    Vercel dashboard → Deployments → three dots → Redeploy
 
 
-────────────────────────────────────────────────────────────
-FILE REFERENCE
-────────────────────────────────────────────────────────────
+════════════════════════════════════════════════════════════
+  TROUBLESHOOTING
+════════════════════════════════════════════════════════════
 
-  terraform/main.tf                  — all AWS infrastructure
-  Dockerfile                         — multi-stage production build
-  .github/workflows/deploy.yml       — CI/CD pipeline
-  scripts/setup-ssm.sh               — populate SSM secrets (run once)
-  .env                               — local dev only, NOT committed to git
-  .env.example                       — template, safe to commit
+  PROBLEM: Page shows "500 Internal Server Error"
+  ─────────────────────────────────────────────────
+  Cause: An environment variable is missing or wrong.
+  Fix:   Vercel dashboard → Settings → Environment Variables
+         Check every variable is filled in correctly.
+         After editing, redeploy.
 
+  PROBLEM: Clerk redirect loop / "page isn't redirecting"
+  ─────────────────────────────────────────────────────────
+  Cause: Clerk doesn't know your Vercel URL is allowed.
+  Fix:   Follow Step 6 again, make sure the URL is added
+         in Clerk dashboard with no typos.
+
+  PROBLEM: "Invalid DATABASE_URL" or database errors
+  ────────────────────────────────────────────────────
+  Cause: DATABASE_URL env var is wrong or migrations not run.
+  Fix:   Double-check DATABASE_URL in Vercel env vars (no
+         extra spaces). Run Step 7 again if needed.
+
+  PROBLEM: Build fails on Vercel
+  ────────────────────────────────
+  Cause: Code error or missing env var during build.
+  Fix:   Vercel dashboard → the failed deployment → click it
+         → scroll through build logs to find the red error.
+         Share the error message with Safwan.
+
+  PROBLEM: Login works but dashboard is empty / broken
+  ──────────────────────────────────────────────────────
+  Cause: NEXT_PUBLIC_APP_URL is wrong so API calls fail.
+  Fix:   Make sure NEXT_PUBLIC_APP_URL matches your Vercel
+         URL exactly, then redeploy.
+
+
+════════════════════════════════════════════════════════════
+  WHAT EACH SERVICE DOES (just for reference)
+════════════════════════════════════════════════════════════
+
+  Vercel       — hosts the Next.js app, runs the server,
+                 auto-deploys on every GitHub push
+
+  Neon         — PostgreSQL database in the cloud,
+                 stores all financial data (already set up)
+
+  Clerk        — handles user login, signup, sessions,
+                 Google/GitHub OAuth if needed
+
+  Plaid        — connects to real bank accounts to import
+                 transactions
+
+  LemonSqueezy — handles subscription payments (not
+                 configured yet, app works without it)
+
+  Gemini AI    — AI-powered financial insights feature
+
+============================================================
+  END OF GUIDE
+  Questions? Ask Safwan.
 ============================================================
